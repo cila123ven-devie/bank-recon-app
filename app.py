@@ -5,7 +5,7 @@ import re
 st.title("🔍 Smart Bank Reconciliation Tool")
 
 # -------------------------------
-# LOAD FILE (handles CSV + Excel)
+# LOAD FILE (CSV + Excel)
 # -------------------------------
 def load_file(file):
     if file.name.endswith(".csv"):
@@ -47,7 +47,7 @@ account_map = {
 }
 
 # -------------------------------
-# EXTRACT POLICY FROM TEXT
+# EXTRACT POLICY
 # -------------------------------
 def extract_policy(desc):
     match = re.search(r'(CTH\d+|CTO\d+|CTB\d+|ACU\d+|LSM\d+|AST\d+|GCI\d+|Res\d+)', str(desc))
@@ -68,16 +68,24 @@ def process_tial(file):
     return result
 
 # -------------------------------
-# PROCESS BANK
+# PROCESS BANK (MULTIPLE FILES)
 # -------------------------------
-def process_bank(file):
-    bank = load_file(file)
+def process_bank(files):
 
-    bank["Policy"] = bank["Description"].apply(extract_policy)
-    bank["Group"] = bank["Policy"].apply(get_group)
-    bank["Amount"] = bank["Transaction Amount"]
+    all_data = []
 
-    result = bank.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
+    for file in files:
+        bank = load_file(file)
+
+        bank["Policy"] = bank["Description"].apply(extract_policy)
+        bank["Group"] = bank["Policy"].apply(get_group)
+        bank["Amount"] = bank["Transaction Amount"]
+
+        all_data.append(bank)
+
+    combined = pd.concat(all_data, ignore_index=True)
+
+    result = combined.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
 
     return result
 
@@ -98,16 +106,28 @@ def process_mis(file):
 # -------------------------------
 # FILE UPLOAD
 # -------------------------------
-bank_file = st.file_uploader("Upload Bank Statement", type=["xlsx", "xls", "csv"])
-tial_file = st.file_uploader("Upload Tial Report", type=["xlsx", "xls", "csv"])
-mis_file = st.file_uploader("Upload MIS Report", type=["xlsx", "xls", "csv"])
+bank_files = st.file_uploader(
+    "Upload Bank Statements (multiple allowed)",
+    type=["xlsx", "xls", "csv"],
+    accept_multiple_files=True
+)
+
+tial_file = st.file_uploader(
+    "Upload Tial Report",
+    type=["xlsx", "xls", "csv"]
+)
+
+mis_file = st.file_uploader(
+    "Upload MIS Report",
+    type=["xlsx", "xls", "csv"]
+)
 
 # -------------------------------
 # RUN RECON
 # -------------------------------
-if bank_file and tial_file and mis_file:
+if bank_files and tial_file and mis_file:
 
-    bank = process_bank(bank_file)
+    bank = process_bank(bank_files)
     tial = process_tial(tial_file)
     mis = process_mis(mis_file)
 
@@ -144,3 +164,5 @@ if bank_file and tial_file and mis_file:
     st.dataframe(df)
 
     st.download_button("Download Results", df.to_csv(index=False), "recon_results.csv")
+
+    
