@@ -1,3 +1,7 @@
+def extract_policy_bank(desc):
+    import re
+    match = re.search(r'(CTH\d+|CTO\d+|CTB\d+|ACU\d+|LSM\d+|AST\d+|GCI\d+|Res\d+)', str(desc))
+    return match.group(0) if match else ""
 import pandas as pd
 import streamlit as st
 def get_group(policy):
@@ -31,10 +35,14 @@ account_map = {
 
 def group_tial(tial):
 
+  def group_tial(tial):
+
     tial["Group"] = tial["PolicyNo"].apply(get_group)
     tial["Amount"] = tial["Gross Premium"] + tial["Risk Premium"]
 
     result = tial.groupby(["Group"])["Amount"].sum().reset_index()
+
+    result["Account Number"] = result["Group"].map(account_map)
 
     return result
 st.title("🔍 Smart Bank Reconciliation Tool")
@@ -53,9 +61,21 @@ def extract_policy(desc):
 if bank_file and tial_file and mis_file:
 
     bank = pd.read_excel(bank_file)
+
+bank["Policy"] = bank["Description"].apply(extract_policy_bank)
+bank["Group"] = bank["Policy"].apply(get_group)
+bank["Amount"] = bank["Transaction Amount"]
+
+bank_grouped = bank.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
     tial_raw = pd.read_excel(tial_file)
 tial = group_tial(tial_raw)
     mis = pd.read_excel(mis_file)
+
+mis["Policy"] = mis["Description"].apply(extract_policy_bank)
+mis["Group"] = mis["Policy"].apply(get_group)
+mis["Amount"] = mis["Transaction Amount"]
+
+mis_grouped = mis.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
 
     bank["Policy"] = bank["Description"].apply(extract_policy)
     mis["Policy"] = mis["Description"].apply(extract_policy)
@@ -69,31 +89,31 @@ tial = group_tial(tial_raw)
 
     results = []
 
-    for key in all_keys:
-        b = bank[bank["Policy"] == key]
-        t = tial[tial["Group"] == key]
-        m = mis[mis["Policy"] == key]
+  results = []
 
-        if not b.empty and not t.empty and not m.empty:
-            if round(b["Amount"].sum(),2) == round(t["Amount"].sum(),2) == round(m["Amount"].sum(),2):
-                status = "Matched"
-            else:
-                status = "Amount Mismatch"
-        elif b.empty:
-            status = "Missing in Bank"
-        elif t.empty:
-            status = "Missing in Tial"
-        elif m.empty:
-            status = "Missing in MIS"
+all_groups = set(bank_grouped["Group"]) | set(tial["Group"]) | set(mis_grouped["Group"])
 
-        results.append({
-            "Policy": key,
-            "Status": status
-        })
+for group in all_groups:
 
-    df = pd.DataFrame(results)
+    b = bank_grouped[bank_grouped["Group"] == group]
+    t = tial[tial["Group"] == group]
+    m = mis_grouped[mis_grouped["Group"] == group]
 
-    st.success("Recon Complete ✅")
-    st.dataframe(df)
+    bank_amt = b["Amount"].sum() if not b.empty else 0
+    tial_amt = t["Amount"].sum() if not t.empty else 0
+    mis_amt = m["Amount"].sum() if not m.empty else 0
 
-    st.download_button("Download Results", df.to_csv(index=False), "recon_results.csv")
+    if bank_amt == tial_amt == mis_amt:
+        status = "Matched"
+    else:
+        status = "Mismatch"
+
+    results.append({
+        "Group": group,
+        "Bank Amount": bank_amt,
+        "Tial Amount": tial_amt,
+        "MIS Amount": mis_amt,
+        "Status": status
+    })
+
+df = pd.DataFrame(results)
