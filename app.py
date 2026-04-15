@@ -1,9 +1,12 @@
-def extract_policy_bank(desc):
-    import re
-    match = re.search(r'(CTH\d+|CTO\d+|CTB\d+|ACU\d+|LSM\d+|AST\d+|GCI\d+|Res\d+)', str(desc))
-    return match.group(0) if match else ""
 import pandas as pd
 import streamlit as st
+import re
+
+st.title("🔍 Smart Bank Reconciliation Tool")
+
+# -------------------------------
+# GROUP MAPPING
+# -------------------------------
 def get_group(policy):
     policy = str(policy)
 
@@ -32,88 +35,101 @@ account_map = {
     "RESQ": "1137828080"
 }
 
+# -------------------------------
+# EXTRACT POLICY FROM BANK/MIS
+# -------------------------------
+def extract_policy(desc):
+    match = re.search(r'(CTH\d+|CTO\d+|CTB\d+|ACU\d+|LSM\d+|AST\d+|GCI\d+|Res\d+)', str(desc))
+    return match.group(0) if match else ""
 
-def group_tial(tial):
-
-  def group_tial(tial):
+# -------------------------------
+# GROUP TIAL DATA
+# -------------------------------
+def process_tial(file):
+    tial = pd.read_excel(file)
 
     tial["Group"] = tial["PolicyNo"].apply(get_group)
     tial["Amount"] = tial["Gross Premium"] + tial["Risk Premium"]
 
-    result = tial.groupby(["Group"])["Amount"].sum().reset_index()
-
+    result = tial.groupby("Group")["Amount"].sum().reset_index()
     result["Account Number"] = result["Group"].map(account_map)
 
     return result
-st.title("🔍 Smart Bank Reconciliation Tool")
 
+# -------------------------------
+# PROCESS BANK
+# -------------------------------
+def process_bank(file):
+    bank = pd.read_excel(file)
+
+    bank["Policy"] = bank["Description"].apply(extract_policy)
+    bank["Group"] = bank["Policy"].apply(get_group)
+    bank["Amount"] = bank["Transaction Amount"]
+
+    result = bank.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
+
+    return result
+
+# -------------------------------
+# PROCESS MIS
+# -------------------------------
+def process_mis(file):
+    mis = pd.read_excel(file)
+
+    mis["Policy"] = mis["Description"].apply(extract_policy)
+    mis["Group"] = mis["Policy"].apply(get_group)
+    mis["Amount"] = mis["Transaction Amount"]
+
+    result = mis.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
+
+    return result
+
+# -------------------------------
+# FILE UPLOAD
+# -------------------------------
 bank_file = st.file_uploader("Upload Bank Statement", type=["xlsx"])
 tial_file = st.file_uploader("Upload Tial Report", type=["xlsx"])
 mis_file = st.file_uploader("Upload MIS Report", type=["xlsx"])
 
-def extract_policy(desc):
-    if pd.isna(desc):
-        return ""
-    import re
-    match = re.search(r'\d{6,}', str(desc))
-    return match.group(0) if match else ""
-
+# -------------------------------
+# RUN RECON
+# -------------------------------
 if bank_file and tial_file and mis_file:
 
-    bank = pd.read_excel(bank_file)
-
-bank["Policy"] = bank["Description"].apply(extract_policy_bank)
-bank["Group"] = bank["Policy"].apply(get_group)
-bank["Amount"] = bank["Transaction Amount"]
-
-bank_grouped = bank.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
-    tial_raw = pd.read_excel(tial_file)
-tial = group_tial(tial_raw)
-    mis = pd.read_excel(mis_file)
-
-mis["Policy"] = mis["Description"].apply(extract_policy_bank)
-mis["Group"] = mis["Policy"].apply(get_group)
-mis["Amount"] = mis["Transaction Amount"]
-
-mis_grouped = mis.groupby(["Group", "Account Number"])["Amount"].sum().reset_index()
-
-    bank["Policy"] = bank["Description"].apply(extract_policy)
-    mis["Policy"] = mis["Description"].apply(extract_policy)
-   tial["Group"] = tial["Group"]
-
-    bank["Amount"] = bank["Transaction Amount"]
-    mis["Amount"] = mis["Transaction Amount"]
-    tial["Amount"] = tial["Bank Amount"]
-
-    all_keys = set(bank["Policy"]) | set(tial["Group"]) | set(mis["Policy"])
+    bank = process_bank(bank_file)
+    tial = process_tial(tial_file)
+    mis = process_mis(mis_file)
 
     results = []
 
-  results = []
+    all_groups = set(bank["Group"]) | set(tial["Group"]) | set(mis["Group"])
 
-all_groups = set(bank_grouped["Group"]) | set(tial["Group"]) | set(mis_grouped["Group"])
+    for group in all_groups:
 
-for group in all_groups:
+        b = bank[bank["Group"] == group]
+        t = tial[tial["Group"] == group]
+        m = mis[mis["Group"] == group]
 
-    b = bank_grouped[bank_grouped["Group"] == group]
-    t = tial[tial["Group"] == group]
-    m = mis_grouped[mis_grouped["Group"] == group]
+        bank_amt = b["Amount"].sum() if not b.empty else 0
+        tial_amt = t["Amount"].sum() if not t.empty else 0
+        mis_amt = m["Amount"].sum() if not m.empty else 0
 
-    bank_amt = b["Amount"].sum() if not b.empty else 0
-    tial_amt = t["Amount"].sum() if not t.empty else 0
-    mis_amt = m["Amount"].sum() if not m.empty else 0
+        if round(bank_amt,2) == round(tial_amt,2) == round(mis_amt,2):
+            status = "Matched"
+        else:
+            status = "Mismatch"
 
-    if bank_amt == tial_amt == mis_amt:
-        status = "Matched"
-    else:
-        status = "Mismatch"
+        results.append({
+            "Group": group,
+            "Bank Amount": bank_amt,
+            "Tial Amount": tial_amt,
+            "MIS Amount": mis_amt,
+            "Status": status
+        })
 
-    results.append({
-        "Group": group,
-        "Bank Amount": bank_amt,
-        "Tial Amount": tial_amt,
-        "MIS Amount": mis_amt,
-        "Status": status
-    })
+    df = pd.DataFrame(results)
 
-df = pd.DataFrame(results)
+    st.success("Recon Complete ✅")
+    st.dataframe(df)
+
+    st.download_button("Download Results", df.to_csv(index=False), "recon_results.csv")
