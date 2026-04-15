@@ -5,6 +5,15 @@ import re
 st.title("🔍 Smart Bank Reconciliation Tool")
 
 # -------------------------------
+# LOAD FILE (handles CSV + Excel)
+# -------------------------------
+def load_file(file):
+    if file.name.endswith(".csv"):
+        return pd.read_csv(file)
+    else:
+        return pd.read_excel(file)
+
+# -------------------------------
 # GROUP MAPPING
 # -------------------------------
 def get_group(policy):
@@ -25,7 +34,9 @@ def get_group(policy):
     else:
         return "UNKNOWN"
 
-
+# -------------------------------
+# ACCOUNT MAP
+# -------------------------------
 account_map = {
     "OMI": "1206521767",
     "HOLLARD": "1206592265",
@@ -36,17 +47,17 @@ account_map = {
 }
 
 # -------------------------------
-# EXTRACT POLICY FROM BANK/MIS
+# EXTRACT POLICY FROM TEXT
 # -------------------------------
 def extract_policy(desc):
     match = re.search(r'(CTH\d+|CTO\d+|CTB\d+|ACU\d+|LSM\d+|AST\d+|GCI\d+|Res\d+)', str(desc))
     return match.group(0) if match else ""
 
 # -------------------------------
-# GROUP TIAL DATA
+# PROCESS TIAL
 # -------------------------------
 def process_tial(file):
-    tial = pd.read_excel(file)
+    tial = load_file(file)
 
     tial["Group"] = tial["PolicyNo"].apply(get_group)
     tial["Amount"] = tial["Gross Premium"] + tial["Risk Premium"]
@@ -60,7 +71,7 @@ def process_tial(file):
 # PROCESS BANK
 # -------------------------------
 def process_bank(file):
-    bank = pd.read_excel(file)
+    bank = load_file(file)
 
     bank["Policy"] = bank["Description"].apply(extract_policy)
     bank["Group"] = bank["Policy"].apply(get_group)
@@ -74,7 +85,7 @@ def process_bank(file):
 # PROCESS MIS
 # -------------------------------
 def process_mis(file):
-    mis = pd.read_excel(file)
+    mis = load_file(file)
 
     mis["Policy"] = mis["Description"].apply(extract_policy)
     mis["Group"] = mis["Policy"].apply(get_group)
@@ -87,9 +98,9 @@ def process_mis(file):
 # -------------------------------
 # FILE UPLOAD
 # -------------------------------
-bank_file = st.file_uploader("Upload Bank Statement", type=["xlsx"])
-tial_file = st.file_uploader("Upload Tial Report", type=["xlsx"])
-mis_file = st.file_uploader("Upload MIS Report", type=["xlsx"])
+bank_file = st.file_uploader("Upload Bank Statement", type=["xlsx", "xls", "csv"])
+tial_file = st.file_uploader("Upload Tial Report", type=["xlsx", "xls", "csv"])
+mis_file = st.file_uploader("Upload MIS Report", type=["xlsx", "xls", "csv"])
 
 # -------------------------------
 # RUN RECON
@@ -114,7 +125,7 @@ if bank_file and tial_file and mis_file:
         tial_amt = t["Amount"].sum() if not t.empty else 0
         mis_amt = m["Amount"].sum() if not m.empty else 0
 
-        if round(bank_amt,2) == round(tial_amt,2) == round(mis_amt,2):
+        if round(bank_amt, 2) == round(tial_amt, 2) == round(mis_amt, 2):
             status = "Matched"
         else:
             status = "Mismatch"
