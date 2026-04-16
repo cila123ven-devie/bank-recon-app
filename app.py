@@ -2,120 +2,44 @@ import pandas as pd
 import streamlit as st
 import re
 
-st.title("🔍 Smart Bank Reconciliation Tool")
+st.title("🔍 Policy-Level Bank Reconciliation")
 
 # -------------------------------
-# GROUP MAPPING
-# -------------------------------
-def get_group(policy):
-    policy = str(policy)
-
-    if policy.startswith("CTO"):
-        return "OMI"
-    elif policy.startswith(("CTH", "HD", "CTHB")):
-        return "HOLLARD"
-    elif policy.startswith("CTB"):
-        return "BRYTE"
-    elif policy.startswith(("ACU", "LSM")):
-        return "SANTAM"
-    elif policy.startswith(("AST", "GCI")):
-        return "GUARDRISK"
-    elif policy.startswith("Res"):
-        return "RESQ"
-    else:
-        return "UNKNOWN"
-
-# -------------------------------
-# ACCOUNT MAP
-# -------------------------------
-account_map = {
-    "OMI": "1206521767",
-    "HOLLARD": "1206592265",
-    "BRYTE": "1206521759",
-    "SANTAM": "1206521775",
-    "GUARDRISK": "1206521783",
-    "RESQ": "1137828080"
-}
-
-# -------------------------------
-# EXTRACT ALL POLICIES
+# POLICY EXTRACTION
 # -------------------------------
 def extract_policies(desc):
     desc = str(desc)
 
     patterns = [
-        r'CTH\d+',
-        r'CTO\d+',
-        r'CTB\d+',
-        r'ACU\d+',
-        r'LSM\d+',
-        r'AST\d+',
-        r'GCI\d+',
-        r'RSA\d+',
-        r'Res\d+'
+        r'CTH\d+', r'CTO\d+', r'CTB\d+',
+        r'ACU\d+', r'LSM\d+',
+        r'AST\d+', r'GCI\d+',
+        r'RSA\d+', r'Res\d+'
     ]
 
     found = []
-
-    for pattern in patterns:
-        matches = re.findall(pattern, desc)
-        found.extend(matches)
+    for p in patterns:
+        found += re.findall(p, desc)
 
     return list(set(found))
 
 # -------------------------------
-# GET MAIN POLICY
-# -------------------------------
-def get_main_policy(policies):
-    priority = ("CTH", "CTO", "CTB", "ACU", "LSM")
-
-    for p in policies:
-        if p.startswith(priority):
-            return p
-
-    return policies[0] if policies else ""
-
-# -------------------------------
-# LINK CHILD POLICIES
-# -------------------------------
-def assign_main_policy_column(df, policy_col):
-    main_policy = None
-    assigned = []
-
-    for p in df[policy_col]:
-
-        if isinstance(p, str) and p.startswith(("CTH", "CTO", "CTB", "ACU", "LSM")):
-            main_policy = p
-            assigned.append(p)
-
-        elif isinstance(p, str) and p.startswith(("RSA", "AST", "GCI")):
-            assigned.append(main_policy)
-
-        else:
-            assigned.append(p)
-
-    df["MainPolicy"] = assigned
-    return df
-
-# -------------------------------
-# PROCESS BANK (MULTIPLE FILES)
+# PROCESS BANK
 # -------------------------------
 def process_bank(files):
     df_list = []
 
-    for file in files:
-        df = pd.read_excel(file)
+    for f in files:
+        df = pd.read_excel(f)
+        df["Policies"] = df["Description"].apply(extract_policies)
+        df = df.explode("Policies")
+        df.rename(columns={"Policies": "Policy"}, inplace=True)
+
         df_list.append(df)
 
     bank = pd.concat(df_list, ignore_index=True)
 
-    bank["Policies"] = bank["Description"].apply(extract_policies)
-    bank["Policy"] = bank["Policies"].apply(get_main_policy)
-    bank = assign_main_policy_column(bank, "Policy")
-
-    bank["Group"] = bank["MainPolicy"].apply(get_group)
-
-    result = bank.groupby("Group")["Amount"].sum().reset_index()
+    result = bank.groupby("Policy")["Amount"].sum().reset_index()
     return result
 
 # -------------------------------
@@ -125,12 +49,10 @@ def process_mis(file):
     mis = pd.read_excel(file)
 
     mis["Policies"] = mis["Description"].apply(extract_policies)
-    mis["Policy"] = mis["Policies"].apply(get_main_policy)
-    mis = assign_main_policy_column(mis, "Policy")
+    mis = mis.explode("Policies")
+    mis.rename(columns={"Policies": "Policy"}, inplace=True)
 
-    mis["Group"] = mis["MainPolicy"].apply(get_group)
-
-    result = mis.groupby("Group")["Amount"].sum().reset_index()
+    result = mis.groupby("Policy")["Amount"].sum().reset_index()
     return result
 
 # -------------------------------
@@ -140,12 +62,9 @@ def process_tial(file):
     tial = pd.read_excel(file)
 
     tial["Policy"] = tial["PolicyNo"]
-    tial = assign_main_policy_column(tial, "Policy")
-
-    tial["Group"] = tial["MainPolicy"].apply(get_group)
     tial["Amount"] = tial["Gross Premium"] + tial["Risk Premium"]
 
-    result = tial.groupby("Group")["Amount"].sum().reset_index()
+    result = tial.groupby("Policy")["Amount"].sum().reset_index()
     return result
 
 # -------------------------------
@@ -161,31 +80,40 @@ mis_file = st.file_uploader("Upload MIS FILE", type=["xlsx"])
 if bank_files and tial_file and mis_file:
 
     bank = process_bank(bank_files)
-    tial = process_tial(tial_file)
     mis = process_mis(mis_file)
+    tial = process_tial(tial_file)
 
-    results = []
+    # Merge everything
+    df = pd.merge(bank, mis, on="Policy", how="outer", suffixes=("_Bank", "_MIS"))
+    df = pd.merge(df, tial, on="Policy", how="outer")
 
-    all_groups = set(bank["Group"]) | set(tial["Group"]) | set(mis["Group"])
+    df.rename(columns={"Amount": "Tial"}, inplace=True)
 
-    for group in all_groups:
+    df.fillna(0, inplace=True)
 
-        bank_amt = bank[bank["Group"] == group]["Amount"].sum() if group in bank["Group"].values else 0
-        mis_amt = mis[mis["Group"] == group]["Amount"].sum() if group in mis["Group"].values else 0
-        tial_amt = tial[tial["Group"] == group]["Amount"].sum() if group in tial["Group"].values else 0
+    # ---------------- STATUS ----------------
+    def get_status(row):
+        b = round(row["Amount_Bank"], 2)
+        m = round(row["Amount_MIS"], 2)
+        t = round(row["Tial"], 2)
 
-        results.append({
-            "Group": group,
-            "Bank Total": bank_amt,
-            "MIS Total": mis_amt,
-            "Tial Total": tial_amt,
-            "Bank vs MIS": "Matched" if round(bank_amt,2) == round(mis_amt,2) else "Mismatch",
-            "Bank vs Tial": "Matched" if round(bank_amt,2) == round(tial_amt,2) else "Mismatch"
-        })
+        if b == m == t:
+            return "Matched"
+        elif b == 0:
+            return "Not in Bank"
+        elif m == 0:
+            return "Not in MIS"
+        elif t == 0:
+            return "Not in Tial"
+        else:
+            return "Mismatch"
 
-    df = pd.DataFrame(results)
+    df["Status"] = df.apply(get_status, axis=1)
+
+    # Clean columns
+    df = df[["Policy", "Amount_Bank", "Amount_MIS", "Tial", "Status"]]
 
     st.success("Recon Complete ✅")
     st.dataframe(df)
 
-    st.download_button("Download Results", df.to_csv(index=False), "recon_results.csv")
+    st.download_button("Download Results", df.to_csv(index=False), "policy_recon.csv")
