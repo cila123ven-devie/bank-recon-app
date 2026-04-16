@@ -5,6 +5,14 @@ import re
 st.title("🔍 Smart Bank Reconciliation Tool")
 
 # -------------------------------
+# DATE CLEANING
+# -------------------------------
+def clean_date(df, column):
+    df[column] = pd.to_datetime(df[column], errors='coerce')
+    df[column] = df[column].dt.strftime('%Y-%m-%d')
+    return df
+
+# -------------------------------
 # GROUP MAPPING
 # -------------------------------
 def get_group(policy):
@@ -59,6 +67,11 @@ if bank_file and tial_file and mis_file:
     bank = pd.read_excel(bank_file)
     tial = pd.read_excel(tial_file)
     mis = pd.read_excel(mis_file)
+
+    # Clean Dates
+    bank = clean_date(bank, "Date")
+    tial = clean_date(tial, "Date")
+    mis = clean_date(mis, "Date")
 
     # ---------------- BANK ----------------
     bank["Policy"] = bank["Description"].apply(extract_policy)
