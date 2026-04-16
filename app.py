@@ -68,9 +68,8 @@ if bank_file and tial_file and mis_file:
     tial = pd.read_excel(tial_file)
     mis = pd.read_excel(mis_file)
 
-    # Clean Dates
+    # Clean Dates (only where applicable)
     bank = clean_date(bank, "Date")
-    tial = clean_date(tial, "Date")
     mis = clean_date(mis, "Date")
 
     # ---------------- BANK ----------------
@@ -83,7 +82,8 @@ if bank_file and tial_file and mis_file:
     tial["Group"] = tial["PolicyNo"].apply(get_group)
     tial["Amount"] = tial["Gross Premium"] + tial["Risk Premium"]
 
-    tial_grouped = tial.groupby(["Date", "Group"])["Amount"].sum().reset_index()
+    # 👉 NO DATE GROUPING HERE
+    tial_grouped = tial.groupby(["Group"])["Amount"].sum().reset_index()
     tial_grouped["Account Number"] = tial_grouped["Group"].map(account_map)
 
     # ---------------- MIS ----------------
@@ -98,33 +98,39 @@ if bank_file and tial_file and mis_file:
     all_keys = set(
         tuple(x) for x in bank_grouped[["Date", "Group"]].values
     ) | set(
-        tuple(x) for x in tial_grouped[["Date", "Group"]].values
-    ) | set(
         tuple(x) for x in mis_grouped[["Date", "Group"]].values
     )
 
     for date, group in all_keys:
 
         b = bank_grouped[(bank_grouped["Date"] == date) & (bank_grouped["Group"] == group)]
-        t = tial_grouped[(tial_grouped["Date"] == date) & (tial_grouped["Group"] == group)]
         m = mis_grouped[(mis_grouped["Date"] == date) & (mis_grouped["Group"] == group)]
+        t = tial_grouped[tial_grouped["Group"] == group]
 
         bank_amt = b["Amount"].sum() if not b.empty else 0
-        tial_amt = t["Amount"].sum() if not t.empty else 0
         mis_amt = m["Amount"].sum() if not m.empty else 0
+        tial_amt = t["Amount"].sum() if not t.empty else 0
 
-        if round(bank_amt, 2) == round(tial_amt, 2) == round(mis_amt, 2):
-            status = "Matched"
+        # Compare Bank vs MIS (date-based)
+        if round(bank_amt, 2) == round(mis_amt, 2):
+            status = "Bank vs MIS Matched"
         else:
-            status = "Mismatch"
+            status = "Bank vs MIS Mismatch"
+
+        # Compare Tial separately
+        if round(bank_amt, 2) == round(tial_amt, 2):
+            tial_status = "Tial Matched"
+        else:
+            tial_status = "Tial Mismatch"
 
         results.append({
             "Date": date,
             "Group": group,
             "Bank": bank_amt,
-            "Tial": tial_amt,
             "MIS": mis_amt,
-            "Status": status
+            "Tial (Total)": tial_amt,
+            "Bank vs MIS": status,
+            "Bank vs Tial": tial_status
         })
 
     df = pd.DataFrame(results)
@@ -133,3 +139,5 @@ if bank_file and tial_file and mis_file:
     st.dataframe(df)
 
     st.download_button("Download Results", df.to_csv(index=False), "recon_results.csv")
+
+
